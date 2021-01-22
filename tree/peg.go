@@ -167,6 +167,7 @@ type {{.StructName}} struct {
 	parse		func(rule ...int) error
 	reset		func()
 	Pretty 	bool
+	max token32
 {{if .Ast -}}
 	tokens32
 {{end -}}
@@ -208,27 +209,10 @@ type parseError struct {
 }
 
 func (e *parseError) Error() string {
-	tokens, err := []token32{e.max}, "\n"
-	positions, p := make([]int, 2 * len(tokens)), 0
-	for _, token := range tokens {
-		positions[p], p = int(token.begin), p + 1
-		positions[p], p = int(token.end), p + 1
-	}
-	translations := translatePositions(e.p.buffer, positions)
-	format := "parse error near %v (line %v symbol %v - line %v symbol %v):\n%v\n"
-	if e.p.Pretty {
-		format = "parse error near \x1B[34m%v\x1B[m (line %v symbol %v - line %v symbol %v):\n%v\n"
-	}
-	for _, token := range tokens {
-		begin, end := int(token.begin), int(token.end)
-		err += fmt.Sprintf(format,
-                         rul3s[token.pegRule],
-                         translations[begin].line, translations[begin].symbol,
-                         translations[end].line, translations[end].symbol,
-                         strconv.Quote(string(e.p.buffer[begin:end])))
-	}
-
-	return err
+	end := int(e.max.end)
+	t := translatePositions(e.p.buffer, []int{end})
+	return fmt.Sprintf("%v:%v syntax error", t[end].line, 
+		t[end].symbol)
 }
 
 {{if .Ast}}
@@ -325,6 +309,7 @@ func (p *{{.StructName}}) Init(options ...func(*{{.StructName}}) error) error {
 			r = rule[0]
 		}
 		matches := p.rules[r]()
+		p.max = max
 {{if .Ast -}}
 		p.tokens32 = tree
 {{end -}}
