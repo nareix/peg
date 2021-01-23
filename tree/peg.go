@@ -11,7 +11,6 @@ import (
 	"go/printer"
 	"go/token"
 	"io"
-	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -164,21 +163,45 @@ type {{.StructName}} struct {
 	Buffer		string
 	buffer		[]rune
 	rules		[{{.RulesCount}}]func() bool
-	parse		func(rule ...int) error
-	reset		func()
+	action func(pegRule)
 	Pretty 	bool
 	max token32
 {{if .Ast -}}
 	tokens32
 {{end -}}
+{{if not .Ast -}}
+{{if .HasPush -}}
+	text string
+{{end -}}
+{{end -}}
+	position uint32
+	tokenIndex uint32
 }
 
 func (p *{{.StructName}}) Parse(rule ...int) error {
-	return p.parse(rule...)
+	r := 1
+	if len(rule) > 0 {
+		r = rule[0]
+	}
+	matches := p.rules[r]()
+	if matches {
+{{if .Ast -}}
+		p.Trim(p.tokenIndex)
+{{end -}}
+		return nil
+	}
+	return &parseError{p: p, max: p.max}
 }
 
 func (p *{{.StructName}}) Reset() {
-	p.reset()
+	p.max = token32{}
+	p.position = 0
+	p.tokenIndex = 0
+
+	p.buffer = []rune(p.Buffer)
+	if len(p.buffer) == 0 || p.buffer[len(p.buffer) - 1] != endSymbol {
+		p.buffer = append(p.buffer, endSymbol)
+	}
 }
 
 type textPosition struct {
@@ -248,6 +271,9 @@ func (p *{{.StructName}}) Execute() {
 			{{.String}}
 		{{end}}
 		}
+		if p.action != nil {
+			p.action(token.pegRule)
+		}
 	}
 	_, _, _, _, _ = buffer, _buffer, text, begin, end
 }
@@ -270,113 +296,70 @@ func Size(size int) func(*{{.StructName}}) error {
 }
 {{end -}}
 
+func (p *{{.StructName}}) add(rule pegRule, begin uint32) {
+{{if .Ast -}}
+	p.tokens32.Add(rule, begin, p.position, p.tokenIndex)
+{{end -}}
+	p.tokenIndex++
+	if begin != p.position && p.position > p.max.end {
+		p.max = token32{rule, begin, p.position}
+	}
+}
+
+{{if .HasDot}}
+func (p *{{.StructName}}) matchDot() bool {
+	if p.buffer[p.position] != endSymbol {
+		p.position++
+		return true
+	}
+	return false
+}
+{{end}}
+
+{{if .HasCharacter}}
+func (p *{{.StructName}}) matchChar(c rune) bool {
+	if p.buffer[p.position] == c {
+		p.position++
+		return true
+	}
+	return false
+}
+{{end}}
+
+{{if .HasString}}
+func (p *{{.StructName}}) matchString(s string) bool {
+	i := p.position
+	for _, c := range s {
+		if p.buffer[i] != c {
+			return false
+		}
+		i++
+	}
+	p.position = i
+	return true
+}
+{{end}}
+
+{{if .HasRange}}
+func (p *{{.StructName}}) matchRange(lower rune, upper rune) bool {
+	if c := p.buffer[p.position]; c >= lower && c <= upper {
+		p.position++
+		return true
+	}
+	return false
+}
+{{end}}
+
 func (p *{{.StructName}}) Init(options ...func(*{{.StructName}}) error) error {
-	var (
-		max token32
-		position, tokenIndex uint32
-		buffer []rune
-{{if not .Ast -}}
-{{if .HasPush -}}
-		text string
-{{end -}}
-{{end -}}
-	)
 	for _, option := range options {
 		err := option(p)
 		if err != nil {
 			return err
 		}
 	}
-	p.reset = func() {
-		max = token32{}
-		position, tokenIndex = 0, 0
+	p.Reset()
 
-		p.buffer = []rune(p.Buffer)
-		if len(p.buffer) == 0 || p.buffer[len(p.buffer) - 1] != endSymbol {
-			p.buffer = append(p.buffer, endSymbol)
-		}
-		buffer = p.buffer
-	}
-	p.reset()
-
-	_rules := p.rules
-{{if .Ast -}}
-	tree := p.tokens32
-{{end -}}
-	p.parse = func(rule ...int) error {
-		r := 1
-		if len(rule) > 0 {
-			r = rule[0]
-		}
-		matches := p.rules[r]()
-		p.max = max
-{{if .Ast -}}
-		p.tokens32 = tree
-{{end -}}
-		if matches {
-{{if .Ast -}}
-			p.Trim(tokenIndex)
-{{end -}}
-			return nil
-		}
-		return &parseError{p, max}
-	}
-
-	add := func(rule pegRule, begin uint32) {
-{{if .Ast -}}
-		tree.Add(rule, begin, position, tokenIndex)
-{{end -}}
-		tokenIndex++
-		if begin != position && position > max.end {
-			max = token32{rule, begin, position}
-		}
-	}
-
-	{{if .HasDot}}
-	matchDot := func() bool {
-		if buffer[position] != endSymbol {
-			position++
-			return true
-		}
-		return false
-	}
-	{{end}}
-
-	{{if .HasCharacter}}
-	/*matchChar := func(c byte) bool {
-		if buffer[position] == c {
-			position++
-			return true
-		}
-		return false
-	}*/
-	{{end}}
-
-	{{if .HasString}}
-	matchString := func(s string) bool {
-		i := position
-		for _, c := range s {
-			if buffer[i] != c {
-				return false
-			}
-			i++
-		}
-		position = i
-		return true
-	}
-	{{end}}
-
-	{{if .HasRange}}
-	/*matchRange := func(lower byte, upper byte) bool {
-		if c := buffer[position]; c >= lower && c <= upper {
-			position++
-			return true
-		}
-		return false
-	}*/
-	{{end}}
-
-	_rules = [...]func() bool {
+	p.rules = [...]func() bool {
 		nil,`
 
 type Type uint8
@@ -1146,8 +1129,8 @@ func (t *Tree) Compile(file string, args []string, out io.Writer) (err error) {
 	}()
 
 	_print := func(format string, a ...interface{}) { fmt.Fprintf(&buffer, format, a...) }
-	printSave := func(n uint) { _print("\n   position%d, tokenIndex%d := position, tokenIndex", n, n) }
-	printRestore := func(n uint) { _print("\n   position, tokenIndex = position%d, tokenIndex%d", n, n) }
+	printSave := func(n uint) { _print("\n   position%d, tokenIndex%d := p.position, p.tokenIndex", n, n) }
+	printRestore := func(n uint) { _print("\n   p.position, p.tokenIndex = position%d, tokenIndex%d", n, n) }
 	printTemplate := func(s string) error {
 		return template.Must(template.New("peg").Parse(s)).Execute(&buffer, t)
 	}
@@ -1262,7 +1245,7 @@ func (t *Tree) Compile(file string, args []string, out io.Writer) (err error) {
 		case TypeRule:
 			warn(fmt.Errorf("internal error #1 (%v)", n))
 		case TypeDot:
-			_print("\n   if !matchDot() {")
+			_print("\n   if !p.matchDot() {")
 			/*print("\n   if buffer[position] == endSymbol {")*/
 			printJump(ko)
 			/*print("}\nposition++")*/
@@ -1274,7 +1257,7 @@ func (t *Tree) Compile(file string, args []string, out io.Writer) (err error) {
 				compile(rule.Front(), ko)
 				return
 			}
-			_print("\n   if !_rules[rule%v]() {", name /*rule.GetId()*/)
+			_print("\n   if !p.rules[rule%v]() {", name /*rule.GetId()*/)
 			printJump(ko)
 			_print("}")
 		case TypeRange:
@@ -1283,16 +1266,16 @@ func (t *Tree) Compile(file string, args []string, out io.Writer) (err error) {
 			element = element.Next()
 			upper := element
 			/*print("\n   if !matchRange('%v', '%v') {", escape(lower.String()), escape(upper.String()))*/
-			_print("\n   if c := buffer[position]; c < rune('%v') || c > rune('%v') {", escape(lower.String()), escape(upper.String()))
+			_print("\n   if c := p.buffer[p.position]; c < rune('%v') || c > rune('%v') {", escape(lower.String()), escape(upper.String()))
 			printJump(ko)
-			_print("}\nposition++")
+			_print("}\np.position++")
 		case TypeCharacter:
 			/*print("\n   if !matchChar('%v') {", escape(n.String()))*/
-			_print("\n   if buffer[position] != rune('%v') {", escape(n.String()))
+			_print("\n   if p.buffer[p.position] != rune('%v') {", escape(n.String()))
 			printJump(ko)
-			_print("}\nposition++")
+			_print("}\np.position++")
 		case TypeString:
-			_print("\n   if !matchString(%v) {", strconv.Quote(n.String()))
+			_print("\n   if !p.matchString(%v) {", strconv.Quote(n.String()))
 			printJump(ko)
 			_print("}")
 		case TypePredicate:
@@ -1312,22 +1295,22 @@ func (t *Tree) Compile(file string, args []string, out io.Writer) (err error) {
 			printBegin()
 			if nodeType == TypeAction {
 				if t.Ast {
-					_print("\nadd(rule%v, position)", rule)
+					_print("\np.add(rule%v, p.position)", rule)
 				} else {
 					// There is no AST support, so inline the rule code
 					_print("\n%v", element)
 				}
 			} else {
-				_print("\nposition%d := position", ok)
+				_print("\nposition%d := p.position", ok)
 				compile(element, ko)
 				if n.GetType() == TypePush && !t.Ast {
 					// This is TypePush and there is no AST support,
 					// so inline capture to text right here
 					_print("\nbegin := position%d", ok)
-					_print("\nend := position")
-					_print("\ntext = string(buffer[begin:end])")
+					_print("\nend := p.position")
+					_print("\ntext = string(p.buffer[begin:end])")
 				} else {
-					_print("\nadd(rule%v, position%d)", rule, ok)
+					_print("\np.add(rule%v, position%d)", rule, ok)
 				}
 			}
 			printEnd()
@@ -1352,7 +1335,7 @@ func (t *Tree) Compile(file string, args []string, out io.Writer) (err error) {
 			done, ok := ko, label
 			label++
 			printBegin()
-			_print("\n   switch buffer[position] {")
+			_print("\n   switch p.buffer[p.position] {")
 			elements := n.Slice()
 			elements, last := elements[:len(elements)-1], elements[len(elements)-1].Front().Next()
 			for _, element := range elements {
@@ -1472,14 +1455,7 @@ func (t *Tree) Compile(file string, args []string, out io.Writer) (err error) {
 	_print, label = printTemp, 0
 
 	/* now for the real compile pass */
-	t.PegRuleType = "uint8"
-	if length := int64(t.Len()); length > math.MaxUint32 {
-		t.PegRuleType = "uint64"
-	} else if length > math.MaxUint16 {
-		t.PegRuleType = "uint32"
-	} else if length > math.MaxUint8 {
-		t.PegRuleType = "uint16"
-	}
+	t.PegRuleType = "uint32"
 	if err = printTemplate(pegHeaderTemplate); err != nil {
 		return err
 	}
@@ -1522,7 +1498,7 @@ func (t *Tree) Compile(file string, args []string, out io.Writer) (err error) {
 		}
 		_print("\n  },")
 	}
-	_print("\n }\n p.rules = _rules")
+	_print("\n }\n")
 	_print("\n return nil")
 	_print("\n}\n")
 	return nil

@@ -5,9 +5,9 @@ const (
 	// VERSION is the version of peg
 	VERSION   = "unknown"
 	// BUILDTIME is the build time of peg
-	BUILDTIME = "2021-01-22T16:14:52"
+	BUILDTIME = "2021-01-23T07:24:22"
 	// COMMIT is the commit hash of peg
-	COMMIT    = "e7588a89197f28bc2191a42a0562d77b257e20fe"
+	COMMIT    = "544a89f9cd8839d522297c25d9882825063a6b18"
 	// IS_TAGGED is there a version
 	IS_TAGGED = false
 )
