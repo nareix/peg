@@ -39,6 +39,7 @@ const (
 	ruleUnknown pegRule = iota
 	{{range .RuleNames}}rule{{.String}}
 	{{end}}
+	nrRule
 )
 
 var rul3s = [...]string {

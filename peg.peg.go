@@ -113,6 +113,8 @@ const (
 	ruleAction46
 	ruleAction47
 	ruleAction48
+
+	nrRule
 )
 
 var rul3s = [...]string{
