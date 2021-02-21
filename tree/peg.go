@@ -179,6 +179,8 @@ type {{.StructName}} struct {
 	tokenIndex uint32
 }
 
+var ErrSyntax = fmt.Errorf("syntax error")
+
 func (p *{{.StructName}}) Parse(rule ...int) error {
 	r := 1
 	if len(rule) > 0 {
@@ -191,7 +193,7 @@ func (p *{{.StructName}}) Parse(rule ...int) error {
 {{end -}}
 		return nil
 	}
-	return &parseError{p: p, max: p.max}
+	return ErrSyntax
 }
 
 func (p *{{.StructName}}) Reset() {
@@ -223,20 +225,11 @@ func translatePositions(buffer []rune, positions []int) textPositionMap {
 			break search
 		}
  	}
+	for ; j < length; j++ {
+		translations[positions[j]] = textPosition{line, symbol}
+	}
 
 	return translations
-}
-
-type parseError struct {
-	p *{{.StructName}}
-	max token32
-}
-
-func (e *parseError) Error() string {
-	end := int(e.max.end)
-	t := translatePositions(e.p.buffer, []int{end})
-	return fmt.Sprintf("%v:%v syntax error", t[end].line, 
-		t[end].symbol)
 }
 
 {{if .Ast}}

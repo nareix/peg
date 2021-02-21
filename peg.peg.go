@@ -338,6 +338,8 @@ type Peg struct {
 	tokenIndex uint32
 }
 
+var ErrSyntax = fmt.Errorf("syntax error")
+
 func (p *Peg) Parse(rule ...int) error {
 	r := 1
 	if len(rule) > 0 {
@@ -348,7 +350,7 @@ func (p *Peg) Parse(rule ...int) error {
 		p.Trim(p.tokenIndex)
 		return nil
 	}
-	return &parseError{p: p, max: p.max}
+	return ErrSyntax
 }
 
 func (p *Peg) Reset() {
@@ -389,20 +391,11 @@ search:
 			break search
 		}
 	}
+	for ; j < length; j++ {
+		translations[positions[j]] = textPosition{line, symbol}
+	}
 
 	return translations
-}
-
-type parseError struct {
-	p   *Peg
-	max token32
-}
-
-func (e *parseError) Error() string {
-	end := int(e.max.end)
-	t := translatePositions(e.p.buffer, []int{end})
-	return fmt.Sprintf("%v:%v syntax error", t[end].line,
-		t[end].symbol)
 }
 
 func (p *Peg) PrintSyntaxTree() {
